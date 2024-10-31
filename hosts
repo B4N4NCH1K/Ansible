@@ -1,0 +1,7 @@
+[server_2]
+192.168.120.38 ansible_host=192.168.120.39 ansible_user=deb-test ansible_password=1 ansible_become_password=1 ansible_my_user=adm-nekit ansible_my_become_pass=QwErTy123
+
+[this_is_my_server_now]
+your_server ansible_host=192.168.120.39 ansible_user=adm-nekit ansible_password=QwErTy123 ansible_become_password=QwErTy123 ansible_my_user=deb-test ansible_net=192.168.120.0/24
+
+

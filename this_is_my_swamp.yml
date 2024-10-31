@@ -1,0 +1,303 @@
+#MY_PLAYBOOK
+---
+- hosts: server_2
+  become: yes
+  tasks:
+    - name: Create new user for Debian 11
+      ansible.builtin.user:
+        name: "{{ansible_my_user}}"
+        state: present
+        password: "{{ansible_my_become_pass|password_hash('sha512')}}"
+        groups: "sudo"
+        append: true
+        create_home: true
+        generate_ssh_key: true
+
+    - name: Add .bash_history
+      ansible.builtin.file:
+        path: "/home/{{ansible_my_user}}/.bash_history"
+        state: touch
+        owner: "{{ansible_my_user}}"
+        group: "{{ansible_my_user}}"
+        mode: "0600"
+
+    - name: Change sh to bash for new user
+      ansible.builtin.user:
+        name: "{{ansible_my_user}}"
+        shell: /bin/bash
+        
+- hosts: this_is_my_server_now
+  become: yes
+  tasks:    
+    - name: Make ~/.bashrc for new user
+      ansible.builtin.command:
+        cmd: sudo cp /home/{{ansible_my_user}}/.bashrc ~/
+    
+    - name: Kill processes for old user
+      ansible.builtin.command:
+        cmd: sudo pkill -u {{ansible_my_user}}
+    
+    - name: Delete old user
+      ansible.builtin.user:
+        name: "{{ansible_my_user}}"
+        state: absent
+        remove: yes
+ 
+    - name: nash_slonyara-download GPG-key
+      ansible.builtin.apt_key:
+        url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+        state: present  
+
+    - name: nash_slonyara-download repo
+      ansible.builtin.apt_repository:
+        repo: "deb https://apt.postgresql.org/pub/repos/apt bullseye-pgdg main"
+        state: present
+        filename: "pgdg"
+        update_cache: true
+
+    - name: nash_slonyara-update cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: nash_slonyara-install postgres-16
+      ansible.builtin.apt:
+         name: "postgresql-16"
+         state: present
+
+    - name: NGINX
+      ansible.builtin.apt:
+        name: nginx
+        state: latest
+        update_cache: true
+
+    - name: Some packages
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - software-properties-common
+          - curl
+          - vim
+          - git
+          - iftop
+          - mc
+          - htop
+          - ntp
+          - iptables
+          - screen
+          - python3-flask
+          - samba
+        state: latest
+        update_cache: true
+
+    - name: Add configuration of public file to smb.conf
+      ansible.builtin.blockinfile:
+        path: /etc/samba/smb.conf
+        block: |
+          [public]
+          comment = Shared for all
+          path = /samba/public
+          read only = no
+          guest ok = yes
+        insertafter: EOF
+
+    - name: Mkdir /samba/public
+      ansible.builtin.file:
+        path: /samba/public
+        state: directory
+        recurse: yes
+        mode: "0777"
+ 
+    - name: Restart samba
+      ansible.builtin.service:
+        name: smbd
+        state: restarted
+  
+    - name: GPG-key Docker
+      ansible.builtin.apt_key:
+        url: "https://download.docker.com/linux/debian/gpg"
+        state: present
+
+    - name: Add Docker's repo
+      ansible.builtin.apt_repository:
+        repo: "deb https://download.docker.com/linux/debian bullseye stable"
+        state: present
+        update_cache: true
+
+    - name: Update for Docker
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Change to Docker's repo
+      ansible.builtin.command:
+        cmd: apt-cache policy docker-ce
+
+    - name: Install Docker
+      ansible.builtin.apt:
+        name: docker-ce
+        state: latest
+        update_cache: true
+
+    - name: Dir for http-server
+      ansible.builtin.file:
+        path: /home/{{ansible_user}}/Documents/CI-CD-2
+        state: directory
+
+    - name: Install git repo (CI/CD Task)
+      ansible.builtin.git:
+        repo: https://github.com/B4N4NCH1K/CI-CD-2.git
+        dest: /home/{{ansible_user}}/Documents/CI-CD-2
+
+    - name: Git Monitoring Task
+      ansible.builtin.git:
+        repo: https://github.com/B4N4NCH1K/Monitoring.git
+        dest: /home/{{ansible_user}}/Documents/Monitoring
+
+    - name: Download blackbox's archive 
+      ansible.builtin.get_url:
+        url: https://github.com/prometheus/blackbox_exporter/releases/download/v0.25.0/blackbox_exporter-0.25.0.linux-amd64.tar.gz
+        dest: /opt
+
+    - name: Unarchive blackbox
+      ansible.builtin.unarchive:
+        src: /opt/blackbox_exporter-0.25.0.linux-amd64.tar.gz
+        dest: /opt/
+        remote_src: yes
+
+    - name: Delete archive
+      ansible.builtin.file:
+        path: /opt/blackbox_exporter-0.25.0.linux-amd64.tar.gz
+        state: absent
+
+    - name: Add blackbox's system user
+      ansible.builtin.command:
+        cmd: sudo useradd -U --system -s /bin/false blackbox
+
+    - name: Blackbox's file
+      ansible.builtin.file:
+        path: /etc/blackbox
+        state: directory
+        owner: blackbox
+        group: blackbox
+
+    - name: Copy YAML file for blackbox
+      ansible.builtin.copy:
+        src: /home/{{ansible_user}}/Documents/Monitoring/blackbox.yml
+        dest: /etc/blackbox
+        remote_src: yes
+
+    - name: Copy blackbox's bin
+      ansible.builtin.copy:
+        src: /opt/blackbox_exporter-0.25.0.linux-amd64/blackbox_exporter
+        dest: /usr/local/bin/
+        mode: "0755"
+        remote_src: yes
+
+    - name: Change owner and group
+      ansible.builtin.file:
+        path: /usr/local/bin/blackbox_exporter
+        owner: blackbox
+        group: blackbox
+
+    - name: Make blackbox's service
+      ansible.builtin.copy:
+        src: /home/{{ansible_user}}/Documents/Monitoring/blackbox.service
+        dest: /etc/systemd/system/
+        remote_src: yes
+
+    - name: Reload systemd
+      ansible.builtin.command:
+        cmd: systemctl daemon-reload
+
+    - name: Enable blackbox
+      ansible.builtin.service:
+        name: blackbox
+        state: started
+        enabled: yes
+
+    - name: Add prometheus user
+      ansible.builtin.command:
+        cmd: useradd -U --system -s /bin/false prometheus
+
+    - name: Make some directories(prometheus,rules,rules.d,files_sd)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - /var/lib/prometheus
+        - /etc/prometheus
+        - /etc/prometheus/rules
+        - /etc/prometheus/rules.d
+        - /etc/prometheus/files_sd
+
+    - name: Download prometheus's archive 
+      ansible.builtin.get_url:
+        url: https://github.com/prometheus/prometheus/releases/download/v2.55.0/prometheus-2.55.0.linux-amd64.tar.gz
+        dest: /opt
+
+    - name: Unarchive prometheus
+      ansible.builtin.unarchive:
+        src: /opt/prometheus-2.55.0.linux-amd64.tar.gz 
+        dest: /opt/
+        remote_src: yes 
+
+    - name: Delete archive
+      ansible.builtin.file:
+        path: /opt/prometheus-2.55.0.linux-amd64.tar.gz 
+        state: absent
+
+    - name: Copy some files to bin(prometheus and promtool into /usr/local/bin)
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /usr/local/bin/
+        mode: "0755"
+        remote_src: yes
+      loop:
+        - /opt/prometheus-2.55.0.linux-amd64/prometheus
+        - /opt/prometheus-2.55.0.linux-amd64/promtool
+
+    - name: Copy some files to /etc/prometheus
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /etc/prometheus/
+        remote_src: yes
+      loop:
+        - /opt/prometheus-2.55.0.linux-amd64/consoles/
+        - /opt/prometheus-2.55.0.linux-amd64/console_libraries/
+        - /home/{{ansible_user}}/Documents/Monitoring/prometheus.yml
+    
+    - name: Change owner and group 
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: prometheus
+        group: prometheus
+      loop: 
+        - /etc/prometheus
+        - /var/lib/prometheus/
+
+    - name: Permission for /etc/prometheus
+      ansible.builtin.file:
+        path: /etc/prometheus
+        mode: "0774"
+        recurse: yes
+
+    - name: Copy service for prometheus
+      ansible.builtin.copy:
+        src: /home/{{ansible_user}}/Documents/Monitoring/prometheus.service
+        dest: /etc/systemd/system/
+        remote_src: yes
+
+    - name: Reload systemd
+      ansible.builtin.command:
+        cmd: systemctl daemon-reload
+
+    - name: Enable prometheus
+      ansible.builtin.service:
+        name: prometheus
+        state: started
+        enabled: yes
+
+    - name: Reboot
+      ansible.builtin.command:
+        cmd: sudo reboot
+
